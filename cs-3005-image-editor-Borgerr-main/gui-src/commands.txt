@@ -1,0 +1,34 @@
+M - basic mandelbrot 1
+m - basic mandelbrot 2
+J - basic Julia 1
+j - basic Julia 2
+C - basic complex 1
+c - basic complex 2
+
+T - interaction mode set to color table
+t - interaction mode set to fractal
+> or . - increases color table size
+< or , - decreases color table size
+b - fractal mode set to Mandelbrot
+n - fractal mode set to Julia
+F - fractal mode set to ComplexFractal (parent class of Mandelbrot/Julia)
+M1 - changes parameters a, b to wherever the mouse is on the program. Fractal mode must be mandelbrot
+M3 - zooms in depending on where your cursor is
+z - zooms in
+Z - zooms out
+left arrow - shifts left
+right arrow - shifts right
+up arrow - shifts up
+down arrow - shifts down
+R - resets plane boundaries to [-2, 2]
++ or = - increases grid's max number
+'-' - decreases max number
+1 - changes interaction mode to color 1
+2 - changes interaction mode to color 2
+Y - increases current color's red value
+y - decreases current color's red value
+U - increases current color's green value
+u - decreases current color's green value
+I - increases current color's blue value
+i - decreases current color's blue value
+w - writes current view to a ppm file

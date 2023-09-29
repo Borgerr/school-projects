@@ -1,0 +1,8 @@
+grid 1920 1080 255
+size 1920 1080
+mandelbrot
+fractal-plane-size -1000 1000 -1000 1000
+fractal-calculate-single-thread
+grid-apply
+write-single-thread singlethread.ppm
+quit

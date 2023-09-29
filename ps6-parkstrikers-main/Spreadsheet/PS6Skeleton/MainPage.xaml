@@ -1,0 +1,61 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:SS="clr-namespace:SS"
+             x:Class="SpreadsheetGUI.MainPage">
+
+
+    <ContentPage.MenuBarItems>
+            <MenuBarItem Text="File">
+                <MenuFlyoutItem Text="New" Clicked="NewClicked"/>
+                <MenuFlyoutItem Text="Open" Clicked="OpenClicked" />
+                <MenuFlyoutItem Text="Save" Clicked="SaveClicked" />
+                <MenuFlyoutItem Text="Current Filepath" Clicked="RefreshFilepath"/>
+        </MenuBarItem>
+        
+        
+            <MenuBarItem Text="Help">
+                <MenuFlyoutItem Text="Saving Files" Clicked="SavingFilesPopup"/>
+                <MenuFlyoutItem Text="Opening Files" Clicked="OpeningFilesPopup"/>
+                <MenuFlyoutItem Text="Creating a new Spreadsheet" Clicked="NewSpreadsheetPopup"/>
+                <MenuFlyoutItem Text="Understanding Cells" Clicked="UnderstandingCellsPopup"/>
+                <MenuFlyoutItem Text="Understanding Errors" Clicked="UnderstandingErrorsPopup"/>
+                <MenuFlyoutItem Text="Special Features" Clicked="SpecialFeaturesPopup"/>
+        </MenuBarItem>
+    </ContentPage.MenuBarItems>
+    
+
+    <Grid RowDefinitions="40, 40, 40, *">
+        <Entry x:Name="SavePath"
+               Text=""
+               Placeholder="Save Path"
+               VerticalTextAlignment="Center"
+               FontSize="12"
+               Grid.Row="0"/>
+        
+        <Label x:Name="CellName"
+               Text=""  
+               VerticalOptions="Center"
+               HorizontalOptions="Start"
+               Grid.Row="1"/>
+
+
+        <Label x:Name="CellValue"
+               Text="" 
+               VerticalOptions="Center" 
+               HorizontalOptions="Center"
+               Grid.Row="1"/>
+
+
+        <Entry x:Name="CellContent" 
+               Text=""
+               Placeholder="Cell Content"
+               Completed="ContentsChanged" 
+               Grid.Row="2"/>
+
+        <SS:SpreadsheetGrid x:Name="spreadsheetGrid" Grid.Row="3"/>
+
+    </Grid>
+    
+</ContentPage>
+
