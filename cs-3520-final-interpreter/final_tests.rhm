@@ -1,0 +1,453 @@
+#lang shplait
+import:
+  open:
+    "final_class.rhm"
+    "final_inherit.rhm"
+    "final_typed_class.rhm"
+    "final_inherit_parse.rhm"
+    "final_typed_parse.rhm"
+
+
+// definitions here for easier interaction
+def posn_syntax = 'class Posn(x :: Int,
+                              y :: Int):
+                     extends Object
+                     method mdist(arg :: Int) :: Int:
+                       this.x + this.y
+                     method addDist(arg :: Posn) :: Int:
+                       arg.mdist(0) + this.mdist(0)'
+def parsed_posn = parse_t_class(posn_syntax)
+def values(posn_symbol, posn_type) = parsed_posn
+
+def posn3D_syntax = 'class Posn3D(z :: Int):
+                       extends Posn
+                       method mdist(arg :: Int) :: Int:
+                         this.z + super.mdist(arg)'
+def parsed_posn3D = parse_t_class(posn3D_syntax)
+def values(posn3D_symbol, posn3D_type) = parsed_posn3D
+
+def posn4D_syntax = 'class Posn4D(w :: Int):
+                       extends Posn3D
+                       method mdist(arg :: Int) :: Int:
+                         this.w + super.mdist(arg)'
+def parsed_posn4D = parse_t_class(posn4D_syntax)
+def values(posn4D_symbol, posn4D_type) = parsed_posn4D
+
+// chose to make typecasts to descendants with the same number of fields valid
+// since descendants with the same number of fields effectively all look like
+// what Posn4DTwo looks like to Posn4D; in that
+// in Moe, they at most will just add or override methods.
+def posn4D2_syntax = 'class Posn4DTwo():
+                        extends Posn4D
+                        method fall_over(arg :: Int) :: Int:
+                          // falling over in the fourth dimension
+                          super.mdist(arg) + arg'
+def parsed_posn4D2 = parse_t_class(posn4D2_syntax)
+def values(posn4D2_symbol, posn4D2_type) = parsed_posn4D2
+
+// useful in testing null fields
+def component_syntax = 'class Component(v :: Int):
+                          extends Object
+                          method value(arg :: Int) :: Int:
+                            this.v'
+def parsed_component = parse_t_class(component_syntax)
+def values(component_symbol, component_type) = parsed_component
+
+def component2_syntax = 'class Component2():
+                           extends Component'
+def parsed_component2 = parse_t_class(component2_syntax)
+def values(component2_symbol, component2_type) = parsed_component2
+
+def posncomp_syntax = 'class PosnComp(x :: Component,
+                                      y :: Component):
+                         extends Object
+                         method mdist(arg :: Int) :: Int:
+                           this.x.value(arg) + this.y.value(arg)
+                         method takes_comp(arg :: Component) :: Int:
+                           0
+                         method uses_comp(arg :: Component) :: Int:
+                           arg.value(0)'
+def parsed_posncomp = parse_t_class(posncomp_syntax)
+def values(posncomp_symbol, posncomp_type) = parsed_posncomp
+
+def posncomp2_syntax = 'class PosnComp2():
+                          extends PosnComp'
+def parsed_posncomp2 = parse_t_class(posncomp2_syntax)
+def values(posncomp2_symbol, posncomp2_type) = parsed_posncomp2
+
+def posncomp3D_syntax = 'class PosnComp3D(z :: Component):
+                           extends PosnComp
+                           method mdist(arg :: Int) :: Int:
+                             this.z.value(arg) + super.mdist(arg)'
+def parsed_posncomp3D = parse_t_class(posncomp3D_syntax)
+def values(posncomp3D_symbol, posncomp3D_type) = parsed_posncomp3D
+
+module test:
+  // 1 --typecast
+  // changes in inherit_parse.rhm on lines 85
+  // changes in inherit.rhm on lines 26, 70
+  // changes in class.rhm on lines 22, 121, 166
+  // no changes in typed_parse.rhm
+  // changes in typed_class.rhm on lines 165
+  check: typecheck(parse('(Object)(new Posn(1, 2))'),
+                   [parsed_posn, parsed_posn3D, parsed_posn4D])
+         ~is objT(#'Object)
+  check: typecheck(parse('(Posn)(new Posn3D(1, 2, 3))'),
+                   [parsed_posn, parsed_posn3D, parsed_posn4D])
+         ~is objT(#'Posn)
+  check: typecheck(parse('(Object)(new Posn3D(1, 2, 3))'),
+                   [parsed_posn, parsed_posn3D, parsed_posn4D])
+         ~is objT(#'Object)
+  check: typecheck(parse('(Posn)(new Posn4D(1, 2, 3, 4))'),
+                   [parsed_posn, parsed_posn3D, parsed_posn4D])
+         ~is objT(#'Posn)
+  check: typecheck(parse('((Posn)(new Posn4D(1, 2, 3, 4))).mdist(0)'),
+                   [parsed_posn, parsed_posn3D, parsed_posn4D])
+         ~is intT()
+  check: typecheck(parse('(Posn)(new Posn(1, 2))'),
+                   [parsed_posn, parsed_posn3D, parsed_posn4D])
+         ~is objT(#'Posn)
+  check: typecheck(parse('(Posn3D)(new Posn3D(1, 2, 3))'),
+                   [parsed_posn, parsed_posn3D, parsed_posn4D])
+         ~is objT(#'Posn3D)
+  check: typecheck(parse('(Posn4D)(new Posn4D(1, 2, 3, 4))'),
+                   [parsed_posn, parsed_posn3D, parsed_posn4D])
+         ~is objT(#'Posn4D)
+
+  check: typecheck(parse('(Posn)(new Object())'),
+                   [parsed_posn])
+         ~is objT(#'Posn)
+  check: typecheck(parse('(Posn3D)(new Posn(1, 2))'),
+                   [parsed_posn, parsed_posn3D])
+         ~is objT(#'Posn3D)
+       
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(Posn)(new Posn4D(1, 2, 3, 4)).mdist(0)')
+         ~is '3'
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(Posn3D)(new Posn4D(1, 2, 3, 4)).mdist(0)')
+         ~is '6'
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(Posn)(Posn3D)(new Posn4D(1, 2, 3, 4)).mdist(0)')
+         ~is '3'
+
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(Posn)(new Posn(1, 2)).mdist(0)')
+         ~is '3'
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(Posn3D)(new Posn(1, 2)).mdist(0)')
+         ~raises "wrong field count"
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(Posn)(Posn3D)(new Posn(1, 2)).mdist(0)')
+         ~raises "wrong field count"
+
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax, posn4D2_syntax],
+                  '(Posn4DTwo)(new Posn4D(1, 2, 3, 4)).fall_over(-4)')
+         ~is '6'
+
+def guy_syntax = 'class Guy():
+                    extends Object
+                    method returns_posn(arg :: Int) :: Object:
+                      new Posn(1, 2)'
+module test:
+  check: run_prog([posn_syntax, guy_syntax],
+                  '(Posn)((new Guy()).returns_posn(0)).mdist(0)')
+         ~is '3'
+  check: run_prog([posn_syntax, guy_syntax],
+                  '(new Guy()).returns_posn(0).mdist(0)')
+         ~raises "not found"
+
+  // 3 -- if0
+  // changes in inherit_parse.rhm on lines 46
+  // changes in inherit.rhm on lines 29, 70
+  // changes in class.rhm on lines 25, 130
+  // no changes in typed_parse.rhm
+  // changes in typed_class.rhm on lines 178, 215
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  'if 0 == 0
+                   | new Posn(1, 2)
+                   | new Posn3D(1, 2, 3)')
+         ~is run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                      'new Posn(1, 2)')
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  'if 1 == 0
+                   | new Posn(1, 2)
+                   | new Posn3D(1, 2, 3)')
+         ~is run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                      'new Posn3D(1, 2, 3)')
+         
+  check: typecheck(parse('if 0 == 0
+                          | 1
+                          | new Posn(1, 2)'),
+                   [parsed_posn])
+         ~raises "no type"
+  check: typecheck(parse('if 0 == 0
+                          | new Posn(1, 2)
+                          | new Posn3D(1, 2, 3)'),
+                   [parsed_posn, parsed_posn3D])
+         ~is typecheck(parse('new Posn(1, 2)'), [parsed_posn])
+  check: typecheck(parse('if 0 == 0
+                          | new Descendant1()
+                          | new Descendant2()'),
+                   [parse_t_class('class Descendant1():
+                                     extends Object'),
+                    parse_t_class('class Descendant2():
+                                     extends Object')])
+         ~is objT(#'Object)
+  check: typecheck(parse('if 0 == 0
+                          | new Posn4D(1, 2, 3, 4)
+                          | new Posn(1, 2)'),
+                   [parsed_posn, parsed_posn3D, parsed_posn4D])
+         ~is objT(#'Posn)
+
+  // combining 1 and 3
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(if 0 == 0
+                    | (Posn)(new Posn4D(1, 2, 3, 4))
+                    | (Posn3D)(new Posn4D(1, 2, 3, 4))).mdist(0)')
+         ~is '3'
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(if 1 == 0
+                    | (Posn)(new Posn4D(1, 2, 3, 4))
+                    | (Posn3D)(new Posn4D(1, 2, 3, 4))).mdist(0)')
+         ~is '6'
+         
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(if 0 == 0
+                    | (Posn4D)(new Posn3D(1, 2, 3))
+                    | (Posn3D)(new Posn(1, 2))).mdist(0)')
+         ~raises "wrong field count"
+  check: run_prog([posn_syntax, posn3D_syntax, posn4D_syntax],
+                  '(if 1 == 0
+                    | (Posn4D)(new Posn4D(1, 2, 3, 4))
+                    | (Posn3D)(new Posn(1, 2))).mdist(0)')
+         ~raises "wrong field count"
+
+  // 8 -- null
+  // changes in inherit_parse.rhm on lines 44, 72
+  // changes in inherit.rhm on lines 33, 76
+  // changes in class.rhm on lines 29, 49, 138
+  // changes in typed_parse.rhm on lines 44
+  // changes in typed_class.rhm on lines 20, 79, 186, 316
+  check: typecheck(parse('null.m(0)'), [])
+         ~raises "no type"
+  check: typecheck(parse('null + 1'), [])
+         ~raises "no type"
+  // null should always be allowed as
+  // non-number method arguments or field values.
+  // I would like to have the typechecker take care of this before runtime,
+  // but the easier option would certainly be to have this taken care of
+  // at runtime by interp. Possibly discuss during presentation?
+  // a quote from mflatt on discord:
+  // "the intent is that `null` should not appear at run time
+  // in places where a number is expected."
+  check: typecheck(parse('new PosnComp(null, null)'),
+                   [parsed_posncomp, parsed_component])
+         ~is objT(#'PosnComp)
+  check: typecheck(parse('new PosnComp(null, new Component(1))'),
+                   [parsed_posncomp, parsed_component])
+         ~is objT(#'PosnComp)
+  check: typecheck(parse('new PosnComp(0, 1)'),
+                   [parsed_posncomp, parsed_component])
+         ~raises "no type"
+  check: typecheck(parse('new Component(null)'),
+                   [parsed_posncomp, parsed_component])
+         ~raises "no type"
+  check: typecheck(parse('new PosnComp(new Posn(1, 2), null)'),
+                   [parsed_posncomp, parsed_posn, parsed_component])
+         ~raises "no type"
+
+  // class definitions describe the "upmost" supertype that would be accepted
+  // and everything else also would fit that criteria.
+  // remember, null is a subtype of every other non-integer type.
+  check: typecheck(parse('new PosnComp(new Component2(0), null)'),
+                   [parsed_posncomp, parsed_component2, parsed_component])
+         ~is objT(#'PosnComp)
+  check: typecheck(parse('new PosnComp2(new Component(0), null)'),
+                   [parsed_posncomp, parsed_posncomp2, parsed_component])
+         ~is objT(#'PosnComp2)
+  check: typecheck(parse('new PosnComp2(new Component2(0), null)'),
+                   [parsed_posncomp, parsed_posncomp2,
+                    parsed_component, parsed_component2])
+         ~is objT(#'PosnComp2)
+
+  check: typecheck(parse('(new PosnComp(null, null)).mdist(0)'),
+                   [parsed_posncomp, parsed_component])
+         ~is intT()
+  check: run_prog([posncomp_syntax, component_syntax],
+                  '(new PosnComp(null, null)).mdist(0)')
+         ~raises "not an object"
+  check: typecheck(parse('(new PosnComp(null, new Component(1))).mdist(0)'),
+                   [parsed_posncomp, parsed_component])
+         ~is intT()
+  check: run_prog([posncomp_syntax, component_syntax],
+                  '(new PosnComp(null, new Component(1))).mdist(0)')
+         ~raises "not an object"
+  check: typecheck(parse(
+                     '(new PosnComp(new Component(0), new Component(1))).mdist(0)'
+                   ),
+                   [parsed_posncomp, parsed_component])
+         ~is intT()
+
+  check: typecheck(parse('(new PosnComp(null, null)).takes_comp(null)'),
+                   [parsed_posncomp, parsed_component])
+         ~is intT()
+  check: typecheck(parse('(new PosnComp(null, null)).takes_comp(
+                            new Component(1))'),
+                   [parsed_posncomp, parsed_component])
+         ~is intT()
+  check: run_prog([posncomp_syntax, component_syntax],
+                  '(new PosnComp(null, null)).takes_comp(null)')
+         ~is '0'
+  check: run_prog([posncomp_syntax, component_syntax],
+                  '(new PosnComp(null, null)).takes_comp(
+                          new Component(1))')
+         ~is '0'
+         
+  check: typecheck(parse('(new PosnComp(null, null)).uses_comp(
+                            new Component(1))'),
+                   [parsed_posncomp, parsed_component])
+         ~is intT()
+  check: typecheck(parse('(new PosnComp(null, null)).uses_comp(null)'),
+                   [parsed_posncomp, parsed_component])
+         ~is intT()
+  check: run_prog([posncomp_syntax, component_syntax],
+                  '(new PosnComp(null, null)).uses_comp(null)')
+         ~raises "not an object"
+  check: run_prog([posncomp_syntax, component_syntax],
+                  '(new PosnComp(null, null)).uses_comp(
+                     new Component(1))')
+         ~is '1'
+
+  // combining 8 with other features
+  // remember: null is taken to be a subtype of every other non-integer type
+  check: typecheck(parse('if 0 == 0
+                          | null
+                          | null'), [])
+         ~is nullT()
+  check: typecheck(parse('if 0 == 0
+                          | null
+                          | new Posn(1, 2)'), [parsed_posn])
+         ~is objT(#'Posn)
+  check: typecheck(parse('if 0 == 0
+                          | new PosnComp(null, null)
+                          | null'),
+                   [parsed_posncomp, parsed_component])
+         ~is objT(#'PosnComp)
+  check: typecheck(parse('if 0 == 0
+                          | 1
+                          | null'), [parsed_posn])
+         ~raises "no type"
+  check: typecheck(parse('(new Component(0)).value(new Component(0))'),
+                   [parsed_component])
+         ~raises "no type"
+  check: run_prog([posncomp_syntax, component_syntax, posncomp3D_syntax],
+                  '(PosnComp)(new PosnComp3D(null, null, null)).x')
+         ~is 'null'
+  check: run_prog([posncomp_syntax, component_syntax, posncomp3D_syntax],
+                  '(if 0 == 0
+                    | (PosnComp)(new PosnComp3D(null, null, null))
+                    | (PosnComp)(new PosnComp3D(new Component(1),
+                                                null, null))).x')
+         ~is 'null'
+  check: run_prog([posncomp_syntax, component_syntax, posncomp3D_syntax],
+                  '(if 1 == 0
+                    | (PosnComp)(new PosnComp3D(null, null, null))
+                    | (PosnComp)(new PosnComp3D(new Component(1),
+                                                null, null))).x.value(0)')
+         ~is '1'
+  check: run_prog([posncomp_syntax, component_syntax, posncomp3D_syntax],
+                  'if (new PosnComp(new Component(0), null)).x.value(0) == 0
+                   | 0
+                   | 1')
+         ~is '0'
+  check: run_prog([posncomp_syntax, component_syntax, posncomp3D_syntax],
+                  'if (new PosnComp(new Component(1), null)).x.value(0) == 0
+                   | 0
+                   | 1')
+         ~is '1'
+  check: run_prog([posncomp_syntax, component_syntax, posncomp3D_syntax],
+                  'if (new PosnComp(null, null)).x.value(0) == 0
+                   | 0
+                   | 1')
+         ~raises "not an object"
+
+  // 10 -- arrays
+  // changes in inherit_parse.rhm on lines 60, 174
+  // changes in inherit.rhm on lines 35, 78
+  // changes in class.rhm on lines 31, 141
+  // changes in typed_parse.rhm on lines 46
+  // changes in typed_class.rhm on lines 22, 188, 236
+  check: typecheck(parse('new Arr[Arr[Int]] [20]'), [])
+         ~is arrT(arrT(arrT(intT())))
+  check: typecheck(parse('new Int[20]'), [])
+         ~is arrT(intT())
+  check: typecheck(parse('new 1[1]'), [])
+         ~raises ""
+  check: typecheck(parse('(new Int[20])[10]'), [])
+         ~is intT()
+  check: typecheck(parse('(new Arr[Int] [20])[10]'), [])
+         ~is arrT(intT())
+  check: typecheck(parse('(new Arr[Int] [20])[10] := (new Int[10])'), [])
+         ~is intT()
+
+// imperative changing tests:
+def arraychange_syntax = 'class ArrayChange(arr :: Arrof(Int)):
+                            extends Object
+                            method change_index(arg :: Int) :: Int:
+                              if (this.arr)[0] == 0
+                              | ((this.arr)[0] := arg) + (this.arr)[0]  // all integers
+                              | 0'
+// change_index essentially returns arg if there is an imperative change,
+// or returns 0 if there isn't.
+// obviously works best when arg != 0
+def parsed_arraychange = parse_t_class(arraychange_syntax)
+def values(arraychange_symbol, arraychange_type) = parsed_arraychange
+
+module test:
+  check: run_prog([arraychange_syntax],
+                  '(new ArrayChange(new Int[1])).change_index(42)')
+         ~is '42'
+  check: run_prog([arraychange_syntax],
+                  '(new ArrayChange(new Int[1])).change_index(21)')
+         ~is '21'
+  check: run_prog([arraychange_syntax],
+                  '(new ArrayChange(new Int[1])).change_index(9 + 10)')
+         ~is '19'
+
+  check: typecheck(parse('if 0 == 0
+                          | new Posn[10]
+                          | null'), [parsed_posn])
+         ~is arrT(objT(#'Posn))
+  check: typecheck(parse('if 0 == 0
+                          | null
+                          | new Posn[10]'), [parsed_posn])
+         ~is arrT(objT(#'Posn))
+  check: typecheck(parse('if 1 == 0
+                          | new Posn[10]
+                          | null'), [parsed_posn])
+         ~is arrT(objT(#'Posn))
+  check: typecheck(parse('if 1 == 0
+                          | null
+                          | new Posn[10]'), [parsed_posn])
+         ~is arrT(objT(#'Posn))
+
+  // 11 -- array subtypes
+  // since this is all about subtypes,
+  // only changes were made in typed_class.rhm in subtype and array_recur functions
+  check: typecheck(parse('if 0 == 0
+                          | new Posn[10]
+                          | new Posn3D[10]'), [parsed_posn, parsed_posn3D])
+         ~is arrT(objT(#'Posn))
+  check: typecheck(parse('if 0 == 0
+                          | new Posn3D[10]
+                          | new Posn[10]'), [parsed_posn, parsed_posn3D])
+         ~is arrT(objT(#'Posn))
+  check: typecheck(parse('if 1 == 0
+                          | new Posn[10]
+                          | new Posn3D[10]'), [parsed_posn, parsed_posn3D])
+         ~is arrT(objT(#'Posn))
+  check: typecheck(parse('if 1 == 0
+                          | new Posn3D[10]
+                          | new Posn[10]'), [parsed_posn, parsed_posn3D])
+         ~is arrT(objT(#'Posn))

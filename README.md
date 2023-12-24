@@ -5,3 +5,4 @@ Each subdirectory of the root directory contains some backup of a noteworthy cla
 - An image editor from Utah Tech University's CS3005 course, "Software Development in C++"
 - A spreadsheet from University of Utah's CS3500 course, "Software Development"
 - A fully functional online multiplayer version of Snake, from University of Utah's CS3500 course, "Software Development"
+- A fully functional interpreter for a made up programming language "Moe" from University of Utah's CS3520 course, "Programming Languages"

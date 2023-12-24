@@ -1,0 +1,677 @@
+#lang shplait
+import:
+  open:
+    "final_class.rhm"
+    "final_inherit.rhm"
+
+type ClassT
+| classT(super_name :: Symbol,
+         fields :: Listof(Symbol * Type),
+         methods :: Listof(Symbol * MethodT))
+
+type MethodT
+| methodT(arg_type :: Type,
+          result_type :: Type,
+          body_exp :: ExpI)
+
+type Type
+| intT()
+| objT(class_name :: Symbol)
+// 8 -- null
+| nullT()
+// 10 -- arrays
+| arrT(ty :: Type)
+
+// ----------------------------------------
+
+fun type_error(a, msg):
+  error(#'typecheck, "no type: " +& a +& " not " +& msg)
+
+fun get_all_field_types(class_name, t_classes):
+  if class_name == #'Object
+  | []
+  | match find(t_classes, class_name)
+    | classT(super_name, fields, methods):
+        append(get_all_field_types(super_name, t_classes),
+               map(snd, fields))
+
+// ----------------------------------------
+
+fun make_find_in_tree(class_items):
+  fun (name, class_name, t_classes):
+    def t_class = find(t_classes, class_name)
+    def items  = class_items(t_class)
+    def super_name = classT.super_name(t_class)
+    if super_name == #'Object
+    | find(items, name)
+    | try:
+        find(items, name)
+        ~catch:
+          make_find_in_tree(class_items)(name,
+                                         super_name,
+                                         t_classes)
+
+def find_field_in_tree = make_find_in_tree(classT.fields)
+
+def find_method_in_tree = make_find_in_tree(classT.methods)
+
+// ----------------------------------------
+
+fun is_subclass(name1, name2, t_classes):
+  cond
+  | name1 == name2: #true
+  | name1 == #'Object: #false
+  | ~else:
+      match find(t_classes, name1)
+      | classT(super_name, fields, methods):
+          is_subclass(super_name, name2, t_classes)
+
+fun is_subtype(t1, t2, t_classes):
+  // 11 -- array subtypes
+  if (t1 is_a arrT) && (t2 is_a arrT)
+  | is_subtype(arrT.ty(t1), arrT.ty(t2), t_classes)
+  | match t1
+    | objT(name1):
+        match t2 
+        | objT(name2):
+            is_subclass(name1, name2, t_classes)
+        | ~else: #false
+        // changed for 8 -- null
+        // null is a subtype of every non-integer
+    | ~else: (t1 == t2) || (t1 is_a nullT && !(t2 is_a intT))
+
+module test:
+  def a_t_class = values(#'A, classT(#'Object, [], []))
+  def b_t_class = values(#'B, classT(#'A, [], []))
+
+  check: is_subclass(#'Object, #'Object, [])
+         ~is #true
+  check: is_subclass(#'A, #'B, [a_t_class, b_t_class])
+         ~is #false
+  check: is_subclass(#'B, #'A, [a_t_class, b_t_class])
+         ~is #true
+
+  check: is_subtype(intT(), intT(), [])
+         ~is #true
+  check: is_subtype(intT(), objT(#'Object), [])
+         ~is #false
+  check: is_subtype(objT(#'Object), intT(), [])
+         ~is #false
+  check: is_subtype(objT(#'A), objT(#'B), [a_t_class, b_t_class])
+         ~is #false
+  check: is_subtype(objT(#'B), objT(#'A), [a_t_class, b_t_class])
+         ~is #true
+  // 11 -- array subtypes
+  check: is_subtype(arrT(intT()), arrT(intT()), [])
+         ~is #true
+  check: is_subtype(arrT(objT(#'B)), arrT(objT(#'A)), [a_t_class, b_t_class])
+         ~is #true
+
+// ----------------------------------------
+
+def typecheck_exp :: (ExpI, Listof(Symbol * ClassT), Type, Type) -> Type:
+  fun (exp, t_classes, this_type, arg_type):
+    fun recur(exp):
+      typecheck_exp(exp, t_classes, this_type, arg_type)
+    fun typecheck_nums(l, r):
+      match recur(l)
+      | intT():
+          match recur(r)
+          | intT(): intT()
+          | ~else: type_error(r, "Int")
+      | ~else: type_error(l, "Int")
+    match exp
+    | intI(n): intT()
+    | plusI(l, r): typecheck_nums(l, r)
+    | multI(l, r): typecheck_nums(l, r)
+    | argI(): arg_type
+    | thisI(): this_type
+    | newI(class_name, exps):
+        def arg_types = map(recur, exps)
+        def field_types = get_all_field_types(class_name, t_classes)
+        if (length(arg_types) == length(field_types)
+              && foldl(fun (b, r): b && r,
+                       #true,
+                       map2(fun (t1, t2):
+                              is_subtype(t1, t2, t_classes),
+                            arg_types,
+                            field_types)))
+        | objT(class_name)
+        | type_error(exp, "field type mismatch")
+    | getI(obj_exp, field_name):
+        match recur(obj_exp):
+        | objT(class_name):
+            find_field_in_tree(field_name,
+                               class_name,
+                               t_classes)
+        | ~else: type_error(obj_exp, "object")
+    | sendI(obj_exp, method_name, arg_exp):
+        def obj_type = recur(obj_exp)
+        def arg_type = recur(arg_exp)
+        match obj_type
+        | objT(class_name):
+            typecheck_send(class_name, method_name,
+                           arg_exp, arg_type,
+                           t_classes)
+        | ~else:
+           type_error(obj_exp, "object")
+    | superI(method_name, arg_exp):
+        def arg_type = recur(arg_exp)
+        def this_class = find(t_classes, objT.class_name(this_type))
+        typecheck_send(classT.super_name(this_class),
+                       method_name,
+                       arg_exp, arg_type,
+                       t_classes)
+    // 1 -- typecheck
+    | castI(new_type, arg_exp):
+        //def arg_type = recur(arg_exp)
+        match recur(arg_exp)
+        | objT(old_type):
+            cond
+            | is_subclass(old_type, new_type, t_classes):
+                objT(new_type)
+            | is_subclass(new_type, old_type, t_classes):
+                objT(new_type)
+            | ~else:
+                type_error(new_type, "related typecast")
+        | ~else: type_error(arg_exp, "object")
+    // 3 -- if0
+    | if0I(c, then, else):
+        match recur(c)
+        | intT():
+            def t_type = recur(then)
+            def e_type = recur(else)
+            array_recur(t_type, e_type, t_classes, c)
+        | ~else: type_error(c, "Int")
+    // 8 -- null
+    | nullI(): nullT()
+    // 10 -- arrays
+    | newarrI(ty, count):
+        if recur(count) == intT()
+        | arrT(wrap_arr_type(ty, t_classes))
+        | type_error(count, "Int")
+    | arrindexI(index, arr):
+        def i_type = recur(index)
+        def arr_type = recur(arr)
+        if i_type == intT()
+        | match arr_type
+          | arrT(ty): ty
+          | ~else: type_error(arr, "Array")
+        | type_error(index, "Int")
+    | arrassignI(index, arr, exp):
+        // array assignment results in an intV(0) in interp
+        def i_type = recur(index)
+        def arr_type = recur(arr)
+        def exp_type = recur(exp)
+        if i_type == intT()
+        | match arr_type
+          | arrT(ty):
+              if ty == exp_type
+              | intT()
+              | type_error(exp, "internal array type")
+          | ~else: type_error(arr, "Array")
+        | type_error(index, "Int")
+
+// 3 -- if0
+fun find_lub(class1 :: Symbol, class2 :: Symbol,
+             classes :: Listof(Symbol * ClassT)) :: Symbol:
+  cond
+  | is_subclass(class1, class2, classes): class2
+  | is_subclass(class2, class1, classes): class1
+  | ~else:
+      // find super for class1: super1,
+      // and repeat with find_lub(class2, super1, classes)
+      // if is its own super,
+      // throw an error
+      def super1 = classT.super_name(find(classes, class1))
+      // the following commented out expression was used prior
+      // with tests like the Unrelated1 and Unrelated2 one
+      // shown on discord
+      #//
+      if super1 == class1
+      | type_error(super1, "own super")
+      | find_lub(class2, super1, classes)
+      find_lub(class2, super1, classes)
+
+// 10 -- arrays
+fun wrap_arr_type(ty :: Syntax, classes :: Listof(Symbol * ClassT)) :: Type:
+  match ty
+  | 'Arr[ $ty2 ]': arrT(wrap_arr_type(ty2, classes))
+  | 'Int': intT()
+  | 'Null': nullT()
+  | ~else:  // check if in class list, otherwise throw an error
+      begin:
+        def name = syntax_to_symbol(ty)
+        find(classes, name)
+        objT(name)
+
+// 11 -- array subtypes
+fun array_recur(t_type :: Type, e_type :: Type, t_classes :: Listof(Symbol * ClassT), c :: ExpI) :: Type:
+  cond
+  | t_type == e_type:
+      t_type
+  // 11 -- array subtypes
+  | (t_type is_a arrT) && (e_type is_a arrT):
+      arrT(array_recur(arrT.ty(t_type), arrT.ty(e_type), t_classes, c))
+  | (t_type is_a objT) && (e_type is_a objT):
+      objT(find_lub(objT.class_name(t_type),
+                    objT.class_name(e_type),
+                    t_classes))
+  | is_subtype(t_type, e_type, t_classes):
+      e_type
+  | is_subtype(e_type, t_type, t_classes):
+      t_type
+  | ~else: type_error(c, "same branching types")
+      
+module test:
+  fun make_basic_class(name :: Symbol, super :: Symbol):
+    values(name, classT(super, [], []))
+
+  check: array_recur(arrT(objT(#'B)), arrT(objT(#'A)),
+                     [a_t_class, b_t_class], intI(0))
+         ~is arrT(objT(#'A))
+  check: array_recur(nullT(), arrT(objT(#'A)),
+                     [a_t_class], intI(0))
+         ~is arrT(objT(#'A))
+  check: array_recur(arrT(objT(#'A)), nullT(),
+                     [a_t_class], intI(0))
+         ~is arrT(objT(#'A))
+
+  check: find_lub(#'Object, #'Object,
+                  [make_basic_class(#'Object, #'Object)])
+         ~is #'Object
+  check: find_lub(#'classA, #'Object,
+                  [make_basic_class(#'classA, #'Object),
+                   make_basic_class(#'Object, #'Object)])
+         ~is #'Object
+  check: find_lub(#'Object, #'classA,
+                  [make_basic_class(#'classA, #'Object),
+                   make_basic_class(#'Object, #'Object)])
+         ~is #'Object
+  check: find_lub(#'Descendant1, #'Descendant2,
+                  [make_basic_class(#'Descendant1, #'Object),
+                   make_basic_class(#'Descendant2, #'Object),
+                   make_basic_class(#'Object, #'Object)])
+         ~is #'Object
+  check: find_lub(#'Distant1, #'Distant2,
+                  [make_basic_class(#'Distant1, #'inbetweenA),
+                   make_basic_class(#'Distant2, #'inbetweenB),
+                   make_basic_class(#'inbetweenA, #'Object),
+                   make_basic_class(#'inbetweenB, #'Object),
+                   make_basic_class(#'Object, #'Object)])
+         // Distant1 <- inbetweenA <- Object
+         // Distant2 <- inbetweenB <- Object
+         ~is #'Object
+  check: find_lub(#'Distant1, #'Distant2,
+                  [make_basic_class(#'Distant1, #'Object),
+                   make_basic_class(#'Distant2, #'inbetween),
+                   make_basic_class(#'inbetween, #'Object),
+                   make_basic_class(#'Unrelated, #'Unrelated),
+                   make_basic_class(#'Object, #'Object)])
+         // Distant1 <- Object
+         // Distant2 <- inbetween <- Object
+         // Unrelated
+         ~is #'Object
+  
+// 8 -- null
+fun typecheck_send(class_name :: Symbol,
+                   method_name :: Symbol,
+                   arg_exp :: ExpI,
+                   arg_type :: Type,
+                   t_classes :: Listof(Symbol * ClassT)):
+  match find_method_in_tree(method_name,
+                            class_name,
+                            t_classes)
+  | methodT(arg_type_m, result_type, body_exp):
+      if is_subtype(arg_type, arg_type_m, t_classes)
+      | result_type
+      | type_error(arg_exp, to_string(arg_type_m))
+
+fun typecheck_method(method :: MethodT,
+                     this_type :: Type,
+                     t_classes :: Listof(Symbol * ClassT)) :: Void:
+  match method
+  | methodT(arg_type, result_type, body_exp):
+      if is_subtype(typecheck_exp(body_exp, t_classes,
+                                  this_type, arg_type),
+                    result_type,
+                    t_classes)
+      | #void
+      | type_error(body_exp, to_string(result_type))
+
+fun check_override(method_name :: Symbol,
+                   method :: MethodT,
+                   this_class :: ClassT,
+                   t_classes :: Listof(Symbol * ClassT)):
+  def super_name = classT.super_name(this_class)
+  def super_method:
+    try:
+      // Look for method in superclass:
+      find_method_in_tree(method_name,
+                          super_name,
+                          t_classes)
+      ~catch:
+        // no such method in superclass:
+        method
+  if (methodT.arg_type(method) == methodT.arg_type(super_method)
+        && methodT.result_type(method)  == methodT.result_type(super_method))
+  | #void
+  | error(#'typecheck, "bad override of " +& method_name)
+
+fun typecheck_class(class_name :: Symbol,
+                    t_class :: ClassT,
+                    t_classes :: Listof(Symbol * ClassT)):
+  match t_class
+  | classT(super_name, fields, methods):
+      map(fun (m):
+            typecheck_method(snd(m), objT(class_name), t_classes)
+            check_override(fst(m), snd(m), t_class, t_classes),
+          methods)
+
+fun typecheck(a :: ExpI,
+              t_classes :: Listof(Symbol * ClassT)) :: Type:
+  begin:
+    map(fun (tc):
+          typecheck_class(fst(tc), snd(tc), t_classes),
+        t_classes)
+    typecheck_exp(a, t_classes, objT(#'Object), intT())
+
+// ----------------------------------------
+
+module test:
+  def posn_t_class:
+    values(#'Posn,
+           classT(#'Object,
+                  [values(#'x, intT()), values(#'y, intT())],
+                  [values(#'mdist,
+                          methodT(intT(), intT(),
+                                  plusI(getI(thisI(), #'x), getI(thisI(), #'y)))),
+                   values(#'addDist,
+                          methodT(objT(#'Posn), intT(),
+                                  plusI(sendI(thisI(), #'mdist, intI(0)),
+                                        sendI(argI(), #'mdist, intI(0)))))]))
+
+  def posn3D_t_class:
+    values(#'Posn3D,
+           classT(#'Posn,
+                  [values(#'z, intT())],
+                  [values(#'mdist,
+                          methodT(intT(), intT(),
+                                  plusI(getI(thisI(), #'z),
+                                        superI(#'mdist, argI()))))]))
+
+  def posn4D_t_class:
+    values(#'Posn4D,
+           classT(#'Posn3D,
+                  [values(#'w, intT())],
+                  [values(#'mdist,
+                          methodT(intT(), intT(),
+                                  plusI(getI(thisI(), #'w),
+                                        superI(#'mdist, argI()))))]))
+
+  def square_t_class :
+    values(#'Square,
+           classT(#'Object,
+                  [values(#'topleft, objT(#'Posn))],
+                  []))
+
+  fun typecheck_posn(a):
+    typecheck(a, [posn_t_class, posn3D_t_class, square_t_class])
+  
+  def new_posn27 = newI(#'Posn, [intI(2), intI(7)])
+  def new_posn531 = newI(#'Posn3D, [intI(5), intI(3), intI(1)])
+
+  check: typecheck_posn(sendI(new_posn27, #'mdist, intI(0)))
+         ~is intT()
+  check: typecheck_posn(sendI(new_posn531, #'mdist, intI(0)))
+         ~is intT()  
+  check: typecheck_posn(sendI(new_posn531, #'addDist, new_posn27))
+         ~is intT() 
+  check: typecheck_posn(sendI(new_posn27, #'addDist, new_posn531))
+         ~is intT()
+
+  check: typecheck_posn(newI(#'Square, [newI(#'Posn, [intI(0), intI(1)])]))
+         ~is objT(#'Square)
+  check: typecheck_posn(newI(#'Square, [newI(#'Posn3D, [intI(0), intI(1), intI(3)])]))
+         ~is objT(#'Square)
+
+  check: typecheck(multI(intI(1), intI(2)),
+                   [])
+         ~is intT()
+
+  check: typecheck_posn(sendI(intI(10), #'mdist, intI(0)))
+         ~raises "no type"
+  check: typecheck_posn(sendI(new_posn27, #'mdist, new_posn27))
+         ~raises "no type"
+  check: typecheck(plusI(intI(1), newI(#'Object, [])),
+                   [])
+         ~raises "no type"
+  check: typecheck(plusI(newI(#'Object, []), intI(1)),
+                   [])
+         ~raises "no type"
+  check: typecheck(plusI(intI(1), newI(#'Object, [intI(1)])),
+                   [])
+         ~raises "no type"
+  check: typecheck(getI(intI(1), #'x),
+                   [])
+         ~raises "no type"
+  check: typecheck(intI(10),
+                   [posn_t_class,
+                    values(#'Other,
+                           classT(#'Posn,
+                                  [],
+                                  [values(#'mdist,
+                                          methodT(objT(#'Object), intT(),
+                                                  intI(10)))]))])
+         ~raises "bad override"
+  check: typecheck_method(methodT(intT(), objT(#'Object), intI(0)), objT(#'Object), [])
+         ~raises "no type"
+  check: typecheck(intI(0),
+                   [square_t_class,
+                    values(#'Cube,
+                           classT(#'Square,
+                                  [],
+                                  [values(#'m,
+                                          methodT(intT(), intT(),
+                                                  // No such method in superclass:
+                                                  superI(#'m, intI(0))))]))])
+         ~raises "not found"
+
+  // these tests done for code coverage in this file,
+  // look at more tests in `final_tests.rhm`
+  // 1 -- typecast
+  check: typecheck(castI(#'Object, newI(#'Posn, [intI(1), intI(2)])),
+                   [posn_t_class, posn3D_t_class, posn4D_t_class])
+         ~is objT(#'Object)
+  check: typecheck(castI(#'Posn, intI(1)),
+                   [posn_t_class, posn3D_t_class, posn4D_t_class])
+         ~raises "no type"
+  check: typecheck(castI(#'Posn, newI(#'Object, [])),
+                   [posn_t_class])
+         ~raises "no type"
+
+  // 3 -- if0
+  check: typecheck_exp(if0I(intI(0), intI(1), intI(2)),
+                       [],
+                       objT(#'dummy), objT(#'dummy))
+         ~is intT()
+  check: typecheck_exp(if0I(intI(1), intI(1), intI(2)),
+                       [],
+                       objT(#'dummy), objT(#'dummy))
+         ~is intT()
+  check: typecheck_exp(if0I(newI(#'Object, []), intI(1), intI(2)),
+                       [],
+                       objT(#'dummy), objT(#'dummy))
+         ~raises "no type"
+  check: typecheck_exp(if0I(intI(0), newI(#'Object, []), newI(#'Descendant, [])),
+                       [make_basic_class(#'Object, #'Object),
+                        make_basic_class(#'Descendant, #'Object)],
+                       objT(#'dummy), objT(#'dummy))
+         ~is objT(#'Object)
+  check: typecheck_exp(if0I(intI(0), newI(#'Object, []), intI(0)),
+                       [make_basic_class(#'Object, #'Object)],
+                       objT(#'dummy), objT(#'dummy))
+         ~raises "no type"
+  // 8 -- null
+  check: typecheck_exp(nullI(), [], objT(#'dummy), objT(#'dummy))
+         ~is nullT()
+  check: typecheck(
+     newI(#'PosnComp, [nullI(), nullI()]),
+     [
+       values(
+         #'PosnComp,
+         classT(
+           #'Object,
+           [values(#'x, objT(#'Component)), values(#'y, objT(#'Component))],
+           [
+             values(
+               #'mdist,
+               methodT(
+                 intT(),
+                 intT(),
+                 plusI(
+                   sendI(getI(thisI(), #'x), #'value, intI(0)),
+                   sendI(getI(thisI(), #'y), #'value, intI(0))
+                 )
+               )
+             ),
+             values(#'takes_comp, methodT(objT(#'Component), intT(), intI(0))),
+             values(
+               #'uses_comp,
+               methodT(
+                 objT(#'Component),
+                 intT(),
+                 sendI(argI(), #'value, intI(0))
+               )
+             )
+           ]
+         )
+       ),
+       values(
+         #'Component,
+         classT(
+           #'Object,
+           [values(#'v, intT())],
+           [values(#'value, methodT(intT(), intT(), getI(thisI(), #'v)))]
+         )
+       )
+     ]
+   )
+         ~is objT(#'PosnComp)
+  check: typecheck_send(
+     #'Component,
+     #'value,
+     argI(),
+     intT(),
+     [
+       values(
+         #'PosnComp,
+         classT(
+           #'Object,
+           [values(#'x, objT(#'Component)), values(#'y, objT(#'Component))],
+           [
+             values(
+               #'mdist,
+               methodT(
+                 intT(),
+                 intT(),
+                 plusI(
+                   sendI(getI(thisI(), #'x), #'value, argI()),
+                   sendI(getI(thisI(), #'y), #'value, argI())
+                 )
+               )
+             ),
+             values(#'takes_comp, methodT(objT(#'Component), intT(), intI(0))),
+             values(
+               #'uses_comp,
+               methodT(
+                 objT(#'Component),
+                 intT(),
+                 sendI(argI(), #'value, intI(0))
+               )
+             )
+           ]
+         )
+       ),
+       values(
+         #'Component,
+         classT(
+           #'Object,
+           [values(#'v, intT())],
+           [values(#'value, methodT(intT(), intT(), getI(thisI(), #'v)))]
+         )
+       )
+     ]
+   )
+         ~is intT()
+
+  // 10 -- arrays
+  check: typecheck(newarrI('Int', intI(20)), [])
+         ~is arrT(intT())
+  check: typecheck(newarrI('Arr[Int]', intI(20)), [])
+         ~is arrT(arrT(intT()))
+  check: typecheck(newarrI('Posn', intI(20)), [posn_t_class])
+         ~is arrT(objT(#'Posn))
+         
+  check: typecheck(newarrI('Int', nullI()), [])
+         ~raises "no type"
+  check: typecheck(newarrI('invalid', intI(20)), [])
+         ~raises "not found"
+
+  check: typecheck(arrindexI(intI(10), newarrI('Int', intI(20))), [])
+         ~is intT()
+         
+  check: typecheck(arrindexI(intI(10), intI(10)), [])
+         ~raises "no type"
+  check: typecheck(arrindexI(nullI(), newarrI('Int', intI(20))), [])
+         ~raises "no type"
+
+  check: typecheck(arrassignI(intI(0), newarrI('Int', intI(20)), intI(1)), [])
+         ~is intT()
+  check: typecheck(arrassignI(intI(0), newarrI('Null', intI(20)), nullI()), [])
+         ~is intT()
+         
+  check: typecheck(arrassignI(intI(0), newarrI('Null', intI(20)), intI(1)), [])
+         ~raises "no type"
+  check: typecheck(arrassignI(nullI(), newarrI('Int', intI(20)), intI(1)), [])
+         ~raises "no type"
+  check: typecheck(arrassignI(intI(0), nullI(), intI(1)), [])
+         ~raises "no type"
+
+// ----------------------------------------
+
+def strip_types :: ClassT -> ClassI:
+  fun (t_class):
+    match t_class
+    | classT(super_name, fields, methods):
+       classI(super_name,
+              map(fst, fields),
+              map(fun (m):
+                    values(fst(m),
+                           match snd(m)
+                           | methodT(arg_type, result_type, body_exp):
+                               body_exp),
+                  methods))
+
+def interp_t :: (ExpI, Listof(Symbol * ClassT)) -> Value:
+  fun (a, t_classes):
+    interp_i(a,
+             map(fun (c):
+                   values(fst(c), strip_types(snd(c))),
+                 t_classes))
+
+module test:
+  fun interp_t_posn(a):
+    interp_t(a, [posn_t_class, posn3D_t_class])
+  
+  check: interp_t_posn(sendI(new_posn27, #'mdist, intI(0)))
+         ~is intV(9)
+  check: interp_t_posn(sendI(new_posn531, #'mdist, intI(0)))
+         ~is intV(9)
+  check: interp_t_posn(sendI(new_posn531, #'addDist, new_posn27))
+         ~is intV(18)
+  check: interp_t_posn(sendI(new_posn27, #'addDist, new_posn531))
+         ~is intV(18)
+  // 8 -- null
+  check: interp_t_posn(nullI())
+         ~is nullV()

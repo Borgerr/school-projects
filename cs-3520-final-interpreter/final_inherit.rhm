@@ -1,0 +1,301 @@
+#lang shplait
+
+// Make all "class.rhm" definitions available here, where
+// the "class.rhm" file must be in the same directory
+// as this one:
+import:
+  open: "final_class.rhm"
+
+type ExpI
+| intI(n :: Int)
+| plusI(lhs :: ExpI,
+        rhs :: ExpI)
+| multI(lhs :: ExpI,
+        rhs :: ExpI)
+| argI()
+| thisI()
+| newI(class_name :: Symbol,
+       args :: Listof(ExpI))
+| getI(obj_exp :: ExpI,
+       field_name :: Symbol)
+| sendI(obj_exp :: ExpI,
+        method_name :: Symbol,
+        arg_exp :: ExpI)
+| superI(method_name :: Symbol,
+         arg_exp :: ExpI)
+// 1 -- typecast
+| castI(new_type :: Symbol,
+        arg_exp :: ExpI)
+// 3 -- if0
+| if0I(c :: ExpI,
+       then :: ExpI,
+       else :: ExpI)
+// 8 -- null
+| nullI()
+// 10 -- arrays
+| newarrI(ty :: Syntax,  // more convenient to store as syntax
+                         // for things like arrays of arrays
+          count :: ExpI)
+| arrindexI(index :: ExpI,
+            arr :: ExpI)
+| arrassignI(index :: ExpI,
+             arr :: ExpI,
+             exp :: ExpI)
+
+type ClassI
+| classI(super_name :: Symbol,
+         field_names :: Listof(Symbol),
+         methods :: Listof(Symbol * ExpI))
+
+// ----------------------------------------
+
+fun exp_i_to_c(a :: ExpI, super_name :: Symbol) :: Exp:
+  block:
+    fun recur(exp):
+      exp_i_to_c(exp, super_name)
+    match a
+    | intI(n): intE(n)
+    | plusI(l, r): plusE(recur(l), recur(r))
+    | multI(l, r): multE(recur(l), recur(r))
+    | argI(): argE()
+    | thisI(): thisE()
+    | newI(class_name, field_exps):
+        newE(class_name, map(recur, field_exps))
+    | getI(exp, field_name):
+        getE(recur(exp), field_name)
+    | sendI(exp, method_name, arg_exp):
+        sendE(recur(exp), method_name, recur(arg_exp))
+    | superI(method_name, arg_exp):
+        ssendE(thisE(), super_name, method_name, recur(arg_exp))
+    // 1 -- typecast
+    | castI(new_type, arg_exp):
+        castE(new_type, recur(arg_exp))
+    // 3 -- if0
+    | if0I(c, then, else):
+        if0E(recur(c), recur(then), recur(else))
+    // 8 -- null
+    | nullI(): nullE()
+    // 10 -- arrays
+    | newarrI(ty, count):
+        newarrE(ty, recur(count))
+    | arrindexI(index, arr):
+        arrindexE(recur(index), recur(arr))
+    | arrassignI(index, arr, exp):
+        arrassignE(recur(index), recur(arr), recur(exp))
+
+module test:
+  check: exp_i_to_c(intI(10), #'Object)
+         ~is intE(10)
+  check: exp_i_to_c(plusI(intI(10), intI(2)), #'Object)
+         ~is plusE(intE(10), intE(2))
+  check: exp_i_to_c(multI(intI(10), intI(2)), #'Object)
+         ~is multE(intE(10), intE(2))
+  check: exp_i_to_c(argI(), #'Object)
+         ~is argE()
+  check: exp_i_to_c(thisI(), #'Object)
+         ~is thisE()
+  check: exp_i_to_c (newI(#'Object, [intI(1)]), #'Object)
+         ~is newE(#'Object, [intE(1)])
+  check: exp_i_to_c(getI(intI(1), #'x), #'Object)
+         ~is getE(intE(1), #'x)
+  check: exp_i_to_c(sendI(intI(1), #'mdist, intI(2)), #'Object)
+         ~is sendE(intE(1), #'mdist, intE(2))
+  check: exp_i_to_c(superI(#'mdist, intI(2)), #'Posn)
+         ~is ssendE(thisE(), #'Posn, #'mdist, intE(2))
+  // 1 -- typecast
+  check: exp_i_to_c(castI(#'Posn,
+                          newI(#'Posn3D, [intI(1), intI(2), intI(3)])),
+                    #'Object)
+         ~is castE(#'Posn, newE(#'Posn3D,
+                                [intE(1), intE(2), intE(3)]))
+  // 3 -- if0
+  check: exp_i_to_c(if0I(intI(0), intI(1), intI(2)), #'Object)
+         ~is if0E(intE(0), intE(1), intE(2))
+  // 8 -- null
+  check: exp_i_to_c(nullI(), #'Object)
+         ~is nullE()
+  // 10 -- arrays
+  check: exp_i_to_c(newarrI('Int', intI(3)), #'Object)
+         ~is newarrE('Int', intE(3))
+  check: exp_i_to_c(arrindexI(intI(0), newarrI('Int', intI(20))), #'Object)
+         ~is arrindexE(intE(0), newarrE('Int', intE(20)))
+  check: exp_i_to_c(arrassignI(intI(0), newarrI('Int', intI(10)), intI(1)), #'Object)
+         ~is arrassignE(intE(0), newarrE('Int', intE(10)), intE(1))
+
+// ----------------------------------------
+
+fun class_i_to_c_not_flat(c :: ClassI) :: Class:
+  match c
+  | classI(super_name, field_names, methods):
+      classC(field_names,
+             map(fun (m):
+                   values(fst(m),
+                          exp_i_to_c(snd(m), super_name)),
+                 methods))
+module test:
+  def posn3d_mdist_i_method:
+    values(#'mdist,
+           plusI(getI(thisI(), #'z),
+                 superI(#'mdist, argI())))
+  def posn3d_mdist_c_method:
+    values(#'mdist,
+           plusE(getE(thisE(), #'z),
+                 ssendE(thisE(), #'Posn, #'mdist, argE())))
+
+  def posn3d_i_class:
+    values(#'Posn3D,
+           classI(#'Posn,
+                  [#'z],
+                  [posn3d_mdist_i_method]))
+  def posn3d_c_class_not_flat:
+    values(#'Posn3D,
+           classC([#'z],
+                  [posn3d_mdist_c_method]))
+
+  check: class_i_to_c_not_flat(snd(posn3d_i_class))
+         ~is snd(posn3d_c_class_not_flat)
+
+// ----------------------------------------
+
+fun flatten_class(name :: Symbol,
+                  classes_not_flat :: Listof(Symbol * Class),
+                  i_classes :: Listof(Symbol * ClassI)) :: Class:
+  match find(classes_not_flat, name)
+  | classC(field_names, methods):
+      match flatten_super(name, classes_not_flat, i_classes)
+      | classC(super_field_names, super_methods):
+          classC(add_fields(super_field_names, field_names),
+                 add_or_replace_methods(super_methods, methods))
+
+fun flatten_super(name :: Symbol,
+                  classes_not_flat :: Listof(Symbol * Class),
+                  i_classes :: Listof(Symbol * ClassI)) :: Class:
+  match find(i_classes, name)
+  | classI(super_name, field_names, i_methods):
+     if super_name == #'Object
+     | classC([], [])
+     | flatten_class(super_name, classes_not_flat, i_classes)
+
+module test:
+  def posn_i_class:
+    values(#'Posn,
+           classI(#'Object,
+                  [#'x, #'y], 
+                  [values(#'mdist,
+                          plusI(getI(thisI(), #'x),
+                                getI(thisI(), #'y))),
+                   values(#'addDist,
+                          plusI(sendI(thisI(), #'mdist, intI(0)),
+                                sendI(argI(), #'mdist, intI(0))))]))
+  def addDist_c_method:
+    values(#'addDist,
+           plusE(sendE(thisE(), #'mdist, intE(0)),
+                 sendE(argE(), #'mdist, intE(0))))  
+  def posn_c_class_not_flat:
+    values(#'Posn,
+           classC([#'x, #'y],
+                  [values(#'mdist,
+                          plusE(getE(thisE(), #'x),
+                                getE(thisE(), #'y))),
+                   addDist_c_method]))
+  def posn3d_c_class:  
+    values(#'Posn3D,
+           classC([#'x, #'y, #'z],
+                  [posn3d_mdist_c_method,
+                   addDist_c_method]))
+
+  check: flatten_class(#'Posn3D,
+                       [posn_c_class_not_flat,
+                        posn3d_c_class_not_flat],
+                       [posn_i_class,
+                        posn3d_i_class])
+         ~is snd(posn3d_c_class)
+
+// ----------------------------------------
+
+def add_fields = append
+
+fun add_or_replace_methods(methods :: Listof(Symbol * Exp),
+                           new_methods :: Listof(Symbol * Exp))
+  :: (Listof (Symbol * Exp)):
+    match new_methods
+    | []: methods
+    | cons(fst_method, rst_new_methods):
+        add_or_replace_methods(add_or_replace_method(methods,
+                                                     fst_method),
+                               rst_new_methods)
+
+fun add_or_replace_method(methods :: Listof(Symbol * Exp),
+                          new_method :: Symbol * Exp)
+  :: (Listof (Symbol * Exp)):
+    match methods
+    | []: [new_method]
+    | cons(fst_method, rst_methods):
+        if fst(fst_method) == fst(new_method)
+        | cons(new_method, rst_methods)
+        | cons(fst_method,
+               add_or_replace_method(rst_methods,
+                                     new_method))
+
+module test:
+  check: add_fields([#'x, #'y], [#'z])
+         ~is [#'x, #'y, #'z]
+
+  check: add_or_replace_methods([], [])
+         ~is []
+  check: add_or_replace_methods([], [values(#'m, intE(0))])
+         ~is [values(#'m, intE(0))]
+  check: add_or_replace_methods([values(#'m, intE(0))], [])
+         ~is [values(#'m, intE(0))]
+  check: add_or_replace_methods([values(#'m, intE(0))],
+                                [values(#'m, intE(1))])
+         ~is [values(#'m, intE(1))]
+  check: add_or_replace_methods([values(#'m, intE(0)),
+                                 values(#'n, intE(2))],
+                                [values(#'m, intE(1))])
+         ~is [values(#'m, intE(1)),
+              values(#'n, intE(2))]
+  check: add_or_replace_methods([values(#'m, intE(0))],
+                                [values(#'m, intE(1)),
+                                 values(#'n, intE(2))])
+         ~is [values(#'m, intE(1)),
+              values(#'n, intE(2))]
+
+  check: add_or_replace_method([values(#'m, intE(0))],
+                               values(#'m, intE(1)))
+         ~is [values(#'m, intE(1))]
+  check: add_or_replace_method([values(#'m, intE(0))],
+                               values(#'n, intE(2)))
+         ~is [values(#'m, intE(0)),
+              values(#'n, intE(2))]
+
+// ----------------------------------------
+
+fun interp_i(i_a :: ExpI, i_classes :: Listof(Symbol * ClassI)) :: Value:
+  block:
+    def a = exp_i_to_c(i_a, #'Object)
+    def classes_not_flat:
+      map(fun (i): values(fst(i),
+                          class_i_to_c_not_flat(snd(i))),
+          i_classes)
+    def classes:
+      map(fun (c):
+            let name = fst(c):
+              values(name,
+                     flatten_class(name, classes_not_flat, i_classes)),
+          classes_not_flat)
+    interp(a, classes, objV(#'Object, []), intV(0))
+
+module test:
+  check: interp_i(intI(0), [])
+         ~is intV(0)
+
+  check: interp_i(
+           sendI(newI(#'Posn3D, [intI(5), intI(3), intI(1)]),
+                 #'addDist,
+                 newI(#'Posn, [intI(2), intI(7)])),
+           [posn_i_class,
+            posn3d_i_class]
+         )
+         ~is intV(18)
+        

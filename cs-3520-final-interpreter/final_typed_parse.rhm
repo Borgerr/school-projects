@@ -1,0 +1,170 @@
+#lang shplait
+import:
+  open:
+    "final_class.rhm"
+    "final_inherit.rhm"
+    "final_typed_class.rhm"
+    "final_inherit_parse.rhm"
+
+// ----------------------------------------
+
+fun parse_t_class(s :: Syntax) :: (Symbol * ClassT):
+  match s
+  | 'class $name($field, ...):
+       extends $parent_name
+       $method
+       ...':
+      values(syntax_to_symbol(name),
+             classT(syntax_to_symbol(parent_name),
+                    map(parse_t_field,
+                        syntax_to_list('[$field, ...]')),
+                    map(parse_t_method,
+                        syntax_to_list('[$method, ...]'))))
+  | ~else: error(#'parse_class, "invalid input: " +& s)
+
+fun parse_t_field(s :: Syntax) :: (Symbol * Type):
+  match s
+  | '$name :: $ty':
+      values(syntax_to_symbol(name),
+             parse_type(ty))
+  | ~else: error(#'parse_t_field, "invalid input: " +& s)
+
+fun parse_t_method(s :: Syntax) :: (Symbol * MethodT):
+  match s
+  |'method $name(arg :: $arg_ty) :: $res_ty: $body':
+     values(syntax_to_symbol(name),
+            methodT(parse_type(arg_ty),
+                    parse_type(res_ty),
+                    parse(body)))
+  | ~else: error(#'parse_t_method, "invalid input: " +& s)
+
+fun parse_type(s :: Syntax) :: Type:
+  match s
+  | 'Int': intT()
+  // 8 -- null
+  | 'Null': nullT()
+  // 10 -- arrays
+  | 'Arrof($ty)': arrT(parse_type(ty))
+  | ~else:
+      cond
+      | syntax_is_symbol(s):
+          objT(syntax_to_symbol(s))
+      | ~else: error(#'parse_type, "invalid input: " +& s)
+
+module test:
+  check: parse_type('Int')
+         ~is intT()
+  check: parse_type('Object')
+         ~is objT(#'Object)
+  check: parse_type('()')
+         ~raises "invalid input"
+  // 8 -- null
+  check: parse_type('Null')
+         ~is nullT()
+  // 10 -- arrays
+  check: parse_type('Arrof(Int)')
+         ~is arrT(intT())
+
+  check: parse_t_field('x :: Int')
+         ~is values(#'x, intT())
+  check: parse_t_field('x')
+         ~raises "invalid input"
+
+  check: parse_t_method('method m(arg :: Int) :: Object: this')
+         ~is values(#'m, methodT(intT(), objT(#'Object), thisI()))
+  check: parse_t_method('m 1')
+         ~raises "invalid input"
+  
+  check: parse_t_class('class Posn3D(x :: Int,
+                                     y :: Int):
+                          extends Posn
+                          method m1(arg :: Int) :: Int:
+                            arg
+                          method m2(arg :: Int) :: Object:
+                            this')
+         ~is values(#'Posn3D,
+                    classT(#'Posn,
+                           [values(#'x, intT()),
+                            values(#'y, intT())],
+                           [values(#'m1, methodT(intT(), intT(), argI())),
+                            values(#'m2, methodT(intT(), objT(#'Object), thisI()))]))
+  check: parse_t_class('class')
+         ~raises "invalid input"
+
+// ----------------------------------------
+
+fun interp_t_prog(classes :: Listof(Syntax), a :: Syntax) :: Syntax:
+  let v = interp_t(parse(a),
+                   map(parse_t_class, classes)):
+    match v
+    | intV(n): integer_to_syntax(n)
+    | objV(class_name, field_vals): 'object'
+    | nullV(): 'null'
+    | arrV(l): 'array'
+
+fun run_prog(classes :: Listof(Syntax), a :: Syntax) :: Syntax:
+  def parsed_a = parse(a)
+  def parsed_classes = map(parse_t_class, cons('class Object():
+                                                  extends Object',
+                                               classes))
+  begin:
+    typecheck(parsed_a, parsed_classes)
+    match interp_t(parse(a), parsed_classes)
+    | intV(n): integer_to_syntax(n)
+    | objV(class_name, field_vals): 'object'
+    | nullV(): 'null'
+    | arrV(l): 'array'
+
+module test:
+  def posn_syntax = 'class Posn(x :: Int,
+                                y :: Int):
+                       extends Object
+                       method mdist(arg :: Int) :: Int:
+                         this.x + this.y
+                       method addDist(arg :: Posn) :: Int:
+                         arg.mdist(0) + this.mdist(0)'
+  def parsed_posn = parse_t_class(posn_syntax)
+  def values(posn_symbol, posn_type) = parsed_posn
+  
+  def posn3D_syntax = 'class Posn3D(z :: Int):
+                         extends Posn
+                         method mdist(arg :: Int) :: Int:
+                           this.z + super.mdist(arg)'
+  def parsed_posn3D = parse_t_class(posn3D_syntax)
+  def values(posn3D_symbol, posn3D_type) = parsed_posn3D
+
+  check: interp_t_prog(['class Empty():
+                           extends Object'],
+                       'new Empty()')
+         ~is 'object'
+  check: run_prog(['class Empty():
+                      extends Object'],
+                  'new Empty()')
+         ~is 'object'
+         
+  check: interp_t_prog(
+           [posn_syntax, posn3D_syntax],
+           '(new Posn3D(5, 3, 1)).addDist(new Posn(2, 7))'
+         )
+         ~is '18'
+  check: run_prog(
+           [posn_syntax, posn3D_syntax],
+           '(new Posn3D(5, 3, 1)).addDist(new Posn(2, 7))'
+         )
+         ~is '18'
+  // 8 -- null
+  check: interp_t_prog([], 'null')
+         ~is 'null'
+  check: run_prog([], 'null')
+         ~is 'null'
+
+  // posn3D is a subclass of posn
+  check: is_subclass(posn_symbol, posn3D_symbol, [parsed_posn, parsed_posn3D])
+         ~is #false
+  check: is_subclass(posn3D_symbol, posn_symbol, [parsed_posn, parsed_posn3D])
+         ~is #true
+  // 10 -- arrays
+  check: interp_t_prog([], 'new Int[10]')
+         ~is 'array'
+  check: run_prog([], 'new Int[10]')
+         ~is 'array'

@@ -1,0 +1,201 @@
+#lang shplait
+import:
+  open:
+    "final_class.rhm"
+    "final_inherit.rhm"
+
+// ----------------------------------------
+
+fun parse_class(s :: Syntax) :: (Symbol * ClassI):
+  match s
+  | 'class $name($field, ...):
+       extends $parent_name
+       $method
+       ...':
+      values(syntax_to_symbol(name),
+             classI(syntax_to_symbol(parent_name),
+                    map(parse_field,
+                        syntax_to_list('[$field, ...]')),
+                    map(parse_method,
+                        syntax_to_list('[$method, ...]'))))
+  | ~else: error(#'parse_class, "invalid input: " +& s)
+
+fun parse_field(s :: Syntax) :: Symbol:
+  cond
+  | syntax_is_symbol(s):
+      syntax_to_symbol(s)
+  | ~else: error(#'parse_field, "invalid input: " +& s)
+
+fun parse_method(s :: Syntax) :: (Symbol * ExpI):
+  match s
+  |'method $name(arg): $body':
+     values(syntax_to_symbol(name),
+            parse(body))
+  | ~else: error(#'parse_method, "invalid input: " +& s)
+
+fun parse(s :: Syntax) :: ExpI:
+  cond
+  | syntax_is_integer(s):
+      intI(syntax_to_integer(s))
+  | ~else:
+      match s
+      | 'arg': argI()
+      | 'this': thisI()
+      // 8 -- null
+      | 'null': nullI()
+      // 3 -- if0
+      | 'if $cnd == 0
+         | $then
+         | $else':
+          if0I(parse(cnd),
+               parse(then),
+               parse(else))
+          
+      | '$left + $right':
+          plusI(parse(left),
+                parse(right))
+      | '$left * $right':
+          multI(parse(left),
+                parse(right))
+      // 10 -- arrays
+      | 'new $sym [$count]':
+          newarrI(sym,
+                  parse(count))
+      | '$arr [$index] := $val':
+          arrassignI(parse(index),
+                     parse(arr),
+                     parse(val))
+      | '$arr [$index]':
+          arrindexI(parse(index),
+                    parse(arr))
+
+      | 'new $id($arg, ...)':
+          newI(syntax_to_symbol(id),
+               map(parse, syntax_to_list('[$arg, ...]')))
+      | 'super . $method_name ($arg)':
+          superI(syntax_to_symbol(method_name),
+                 parse(arg))
+      | '$obj . $method_name ($arg)':
+          sendI(parse(obj),
+                syntax_to_symbol(method_name),
+                parse(arg))
+      | '$obj . $field_name':
+          getI(parse(obj),
+               syntax_to_symbol(field_name))
+      // 1 -- typecheck
+      | '($(id :: Identifier))$exp':
+          castI(syntax_to_symbol(id),
+                parse(exp))
+
+      | '($e)':
+          parse(e)
+      | ~else:
+          error(#'parse, "invalid input: " +& s)
+
+module test:
+  check: parse('0')
+         ~is intI(0)
+  check: parse('arg')
+         ~is argI()
+  check: parse('this')
+         ~is thisI()
+  check: parse('1 + 2')
+         ~is plusI(intI(1), intI(2))
+  check: parse('1 * 2')
+         ~is multI(intI(1), intI(2))
+  check: parse('new Posn(1, 2)')
+         ~is newI(#'Posn, [intI(1), intI(2)])
+  check: parse('this.x')
+         ~is getI(thisI(), #'x)
+  check: parse('this.m(2)')
+         ~is sendI(thisI(), #'m, intI(2))
+  check: parse('super.m(1)')
+         ~is superI(#'m, intI(1))
+  check: parse('x')
+         ~raises "invalid input"
+  // 1 -- typecast
+  check: parse('(Posn)(new Posn3D(1, 2, 3))')
+         ~is castI(#'Posn,
+                   newI(#'Posn3D,
+                        [intI(1), intI(2), intI(3)]))
+
+  check: parse_field('x')
+         ~is #'x
+  check: parse_field('x 1')
+         ~raises "invalid input"
+
+  check: parse_method('method m(arg): this')
+         ~is values(#'m, thisI())
+  check: parse_method('m(arg): 1 2')
+         ~raises "invalid input"
+  
+  check: parse_class('class Posn3D(x, y, z):
+                        extends Posn 
+                        method m1(arg): arg
+                        method m2(arg): this')
+         ~is values(#'Posn3D,
+                    classI(#'Posn,
+                           [#'x, #'y, #'z],
+                           [values(#'m1, argI()),
+                            values(#'m2, thisI())]))
+  check: parse_class('class')
+         ~raises "invalid input"
+  // 3 -- if0
+  check: parse('if 0 == 0
+                | 1
+                | 2')
+         ~is if0I(intI(0), intI(1), intI(2))
+  // 10 -- arrays
+  check: parse('new Int[10]')
+         ~is newarrI('Int', intI(10))
+  check: parse('(new Int[10])[0]')
+         ~is arrindexI(intI(0), newarrI('Int', intI(10)))
+  check: parse('(new Int[10])[0] := 20')
+         ~is arrassignI(intI(0),
+                        newarrI('Int', intI(10)),
+                        intI(20))
+  check: parse('new Arr[Int][0]')
+         ~is newarrI('Arr[Int]', intI(0))
+  check: parse('(new Arr[Arr[Int]][1])[0] := (new Arr[Arr[Int]][0])')
+         ~is arrassignI(intI(0),
+                        newarrI('Arr[Arr[Int]]', intI(1)),
+                        newarrI('Arr[Arr[Int]]', intI(0)))
+
+// ----------------------------------------
+
+fun interp_prog(classes :: Listof(Syntax), s :: Syntax) :: Syntax:
+  let v = interp_i(parse(s),
+                   map(parse_class, classes)):
+    cond
+    | v is_a intV: integer_to_syntax(intV.n(v))
+    | v is_a objV: 'object'
+    // 8 -- null
+    | v is_a nullV: 'null'
+    // 10 -- arrays
+    | v is_a arrV: 'array'
+
+module test:
+  check: interp_prog(
+           ['class Empty():
+               extends Object'],
+           'new Empty()'
+         )
+         ~is 'object'
+
+  check: interp_prog(
+           ['class Posn(x, y):
+               extends Object
+               method mdist(arg): this.x + this.y
+               method addDist(arg): arg.mdist(0) + this.mdist(0)',
+            'class Posn3D(z):
+               extends Posn
+               method mdist(arg): this.z + super.mdist(arg)'],
+           '(new Posn3D(5, 3, 1)).addDist(new Posn(2, 7))'
+         )
+         ~is '18'
+  // 8 -- null
+  check: interp_prog([], 'null')
+         ~is 'null'
+  // 10 -- arrays
+  check: interp_prog([], 'new Int[5]')
+         ~is 'array'
